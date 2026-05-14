@@ -1,0 +1,15 @@
+{
+  "cases": [
+    { "prompt": "Star the custom view 123454 for quick access", "expected": "addStarredView" },
+    { "prompt": "I would like to star the view that I recently accessed", "expected": "getRecentView" },
+    { "prompt": "Pin a view for easy access", "expected": "addStarredView" },
+    { "prompt": "Add Starr View", "expected": "addStarredView" },
+    { "prompt": "Record the view I just opened", "expected": "updateRecentView" },
+    { "prompt": "Get the last view I was on", "expected": "getRecentView" },
+    { "prompt": "Remove a view from my starred list", "expected": "removeStarredView" },
+    { "prompt": "List all custom views", "expected": "getViews" },
+    { "prompt": "Create a new custom view", "expected": "addCustomView" },
+    { "prompt": "Delete a custom view", "expected": "deleteCustomView" },
+    { "prompt": "Get my starred views", "expected": "getStarredViews" }
+  ]
+}
