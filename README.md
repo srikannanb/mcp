@@ -25,6 +25,14 @@ For development:
 pip install -e ".[dev]"
 ```
 
+If the `eval-mcp` command is not on your `PATH` (or you prefer not to use the console script), you can run the CLI as a module instead:
+
+```bash
+python3 -m eval_mcp.cli --oas ... --eval ... --output ...
+```
+
+Every flag shown below works identically with either form — replace `eval-mcp` with `python3 -m eval_mcp.cli`.
+
 ## Configure
 
 ### Anthropic backend (default)
