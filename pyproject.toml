@@ -19,6 +19,7 @@ dev = ["pytest>=7.0"]
 
 [project.scripts]
 eval-mcp = "eval_mcp.cli:main"
+eval-mcp-stability = "eval_mcp.stability_cli:main"
 
 [tool.setuptools.packages.find]
 include = ["eval_mcp*"]

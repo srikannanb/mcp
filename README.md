@@ -9,7 +9,9 @@ CLI tool that evaluates whether OpenAPI Specification (OAS) endpoint description
 3. For each test case, calls a model with tool-use enabled and forces a tool pick. Two backends supported:
    - **Anthropic** (default): `client.messages.create` with `tool_choice={"type":"any"}`; tools block is prompt-cached and cases run concurrently with a semaphore. Optional `--batch` submits via the Anthropic batch API (50% cheaper, runs within 24h).
    - **Ollama / OpenAI-compatible**: any local server exposing `/v1/chat/completions` (Ollama, LM Studio, vLLM, llama.cpp). Tools are sent in OpenAI's function-calling format with `tool_choice="required"`.
-4. Generates a self-contained HTML report showing per-case pass/fail and an overall score
+4. Generates a self-contained HTML report showing per-case pass/fail, the parameter values the model extracted from the prompt (when the correct tool was picked), and an overall score
+
+There's also a sibling command, `eval-mcp-stability`, that runs each case N times and reports a stability score per case — useful because a single run is noisy. See [Stability evaluator](#stability-evaluator) below.
 
 ## Install
 
@@ -17,7 +19,7 @@ CLI tool that evaluates whether OpenAPI Specification (OAS) endpoint description
 pip install -e .
 ```
 
-This exposes the `eval-mcp` console script.
+This exposes two console scripts: `eval-mcp` (single-run evaluation) and `eval-mcp-stability` (N-runs-per-case stability evaluation).
 
 For development:
 
@@ -25,13 +27,14 @@ For development:
 pip install -e ".[dev]"
 ```
 
-If the `eval-mcp` command is not on your `PATH` (or you prefer not to use the console script), you can run the CLI as a module instead:
+If the console scripts are not on your `PATH` (or you prefer not to use them), you can run the CLIs as modules instead:
 
 ```bash
 python3 -m eval_mcp.cli --oas ... --eval ... --output ...
+python3 -m eval_mcp.stability_cli --oas ... --eval ... --runs 5 --output ...
 ```
 
-Every flag shown below works identically with either form — replace `eval-mcp` with `python3 -m eval_mcp.cli`.
+Every flag shown below works identically with either form — replace `eval-mcp` with `python3 -m eval_mcp.cli` and `eval-mcp-stability` with `python3 -m eval_mcp.stability_cli`.
 
 ## Configure
 
@@ -127,6 +130,47 @@ eval-mcp \
 
 `--batch` is only supported with `--provider anthropic` (local servers have no batch endpoint).
 
+## Stability evaluator
+
+`eval-mcp-stability` runs each test case N times (default 5) instead of once, and reports a pass rate per case plus an aggregate stability score. This catches LLM nondeterminism that a single-run eval hides — a case that passes 3/5 is very different from one that passes 5/5, but both look identical to `eval-mcp`.
+
+```bash
+# Default (5 runs per case)
+eval-mcp-stability \
+  --oas path/to/CustomView.json \
+  --eval evals/CustomView.json \
+  --output stability-report.html
+
+# More runs for higher signal
+eval-mcp-stability \
+  --oas path/to/CustomView.json \
+  --eval evals/CustomView.json \
+  --runs 10
+
+# Batch mode strongly recommended for N×M requests (cheaper, dodges 529 overload errors)
+eval-mcp-stability \
+  --oas path/to/CustomView.json \
+  --eval evals/CustomView.json \
+  --runs 10 \
+  --batch
+
+# Local model
+eval-mcp-stability \
+  --provider ollama \
+  --model llama3.1:8b \
+  --oas path/to/CustomView.json \
+  --eval evals/CustomView.json
+```
+
+The report shows a histogram of which tools the model picked across the N runs (the expected tool is highlighted green; transient API errors show as `ERROR`), and classifies each case as **STABLE-PASS** (N/N), **STABLE-FAIL** (0/N), or **FLAKY** (anything in between). Transient per-run failures are caught and recorded as `ERROR` in the histogram rather than aborting the whole run.
+
+Flags are the same as `eval-mcp` plus:
+
+| Flag | Description | Default |
+|---|---|---|
+| `--runs <n>` | Runs per case | `5` |
+| `--output <path>` | HTML report output path | `stability-report.html` |
+
 ## Eval file format
 
 ```json
@@ -138,7 +182,7 @@ eval-mcp \
 }
 ```
 
-Each case is a natural-language user prompt and the `operationId` you expect Claude to pick.
+Each case is a natural-language user prompt and the `operationId` you expect Claude to pick. The same file format is used by both `eval-mcp` and `eval-mcp-stability`.
 
 ## Flags
 
@@ -177,12 +221,15 @@ eval-mcp/
 ├── README.md
 ├── eval_mcp/
 │   ├── __init__.py
-│   ├── oas_loader.py     # OAS JSON → list[Operation], resolves $ref
-│   ├── eval_loader.py    # eval JSON → list[TestCase]
-│   ├── evaluator.py      # Operation → Claude tool def, runs API calls
-│   ├── report.py         # list[EvalResult] → self-contained HTML
-│   └── cli.py            # argparse entry point (eval-mcp console script)
-├── tests/                # pytest tests (no live API calls; both providers mocked)
+│   ├── oas_loader.py         # OAS JSON → list[Operation], resolves $ref
+│   ├── eval_loader.py        # eval JSON → list[TestCase]
+│   ├── evaluator.py          # Operation → tool def; runs single-pass API calls
+│   ├── report.py             # list[EvalResult] → self-contained HTML
+│   ├── cli.py                # argparse entry point (eval-mcp console script)
+│   ├── stability.py          # N-runs-per-case runner; reuses helpers from evaluator.py
+│   ├── stability_report.py   # list[StabilityResult] → self-contained HTML
+│   └── stability_cli.py      # argparse entry point (eval-mcp-stability console script)
+├── tests/                    # pytest tests (no live API calls; both providers mocked)
 └── evals/
-    └── CustomView.json   # example eval file
+    └── CustomView.json       # example eval file
 ```

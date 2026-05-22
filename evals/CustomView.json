@@ -10,6 +10,9 @@
     { "prompt": "List all custom views", "expected": "getViews" },
     { "prompt": "Create a new custom view", "expected": "addCustomView" },
     { "prompt": "Delete a custom view", "expected": "deleteCustomView" },
-    { "prompt": "Get my starred views", "expected": "getStarredViews" }
+    { "prompt": "Get my starred views", "expected": "getStarredViews" },
+    { "prompt": "I would like to star the view that I recently accessed.", "expected": "getRecentView" },
+    { "prompt": "List all custom views from sritest department", "expected": "getViews" },
+    { "prompt": "List all custom views from contact Module from sritest department", "expected": "getViews" }
   ]
 }

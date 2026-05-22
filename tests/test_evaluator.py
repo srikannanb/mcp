@@ -73,10 +73,11 @@ def test_build_tool_handles_list_type_in_schema():
     assert tool["input_schema"]["properties"]["deptId"]["type"] == "string"
 
 
-def _make_mock_async_client(tool_name):
+def _make_mock_async_client(tool_name, tool_input=None):
     mock_block = MagicMock()
     mock_block.type = "tool_use"
     mock_block.name = tool_name
+    mock_block.input = tool_input or {}
     mock_response = MagicMock()
     mock_response.content = [mock_block]
     mock_client = MagicMock()
@@ -162,6 +163,7 @@ def test_evaluate_ollama_provider_calls_openai_endpoint():
 
     mock_tool_call = MagicMock()
     mock_tool_call.function.name = "addStarredView"
+    mock_tool_call.function.arguments = "{}"
     mock_message = MagicMock()
     mock_message.tool_calls = [mock_tool_call]
     mock_choice = MagicMock()
@@ -205,6 +207,7 @@ def test_evaluate_respects_concurrency_semaphore():
     mock_block = MagicMock()
     mock_block.type = "tool_use"
     mock_block.name = "op"
+    mock_block.input = {}
     mock_response = MagicMock()
     mock_response.content = [mock_block]
 
@@ -225,3 +228,80 @@ def test_evaluate_respects_concurrency_semaphore():
         evaluate(ops, cases, "claude-sonnet-4-6", concurrency=2)
 
     assert peak <= 2
+
+
+def test_evaluate_captures_extracted_params_on_pass():
+    ops = [make_op("addStarredView", summary="Star a view")]
+    cases = [TestCase(prompt="Star view 42", expected_operation_id="addStarredView")]
+
+    mock_client = _make_mock_async_client("addStarredView", tool_input={"cvId": "42"})
+    with patch("eval_mcp.evaluator.anthropic.AsyncAnthropic", return_value=mock_client):
+        results = evaluate(ops, cases, "claude-sonnet-4-6")
+
+    assert results[0].passed is True
+    assert results[0].extracted_params == {"cvId": "42"}
+
+
+def test_evaluate_blanks_extracted_params_on_fail():
+    """When the model picks the wrong tool, extracted_params must be empty."""
+    ops = [
+        make_op("addStarredView", summary="Add"),
+        make_op("removeStarredView", summary="Remove"),
+    ]
+    cases = [TestCase(prompt="Star view 42", expected_operation_id="addStarredView")]
+
+    mock_client = _make_mock_async_client("removeStarredView", tool_input={"cvId": "42"})
+    with patch("eval_mcp.evaluator.anthropic.AsyncAnthropic", return_value=mock_client):
+        results = evaluate(ops, cases, "claude-sonnet-4-6")
+
+    assert results[0].passed is False
+    assert results[0].extracted_params == {}
+
+
+def test_evaluate_ollama_parses_arguments_json():
+    """Ollama returns tool args as a JSON string — they should be parsed into a dict."""
+    ops = [make_op("addStarredView", summary="Add")]
+    cases = [TestCase(prompt="Star view 42", expected_operation_id="addStarredView")]
+
+    mock_tool_call = MagicMock()
+    mock_tool_call.function.name = "addStarredView"
+    mock_tool_call.function.arguments = '{"cvId": "42"}'
+    mock_message = MagicMock()
+    mock_message.tool_calls = [mock_tool_call]
+    mock_choice = MagicMock()
+    mock_choice.message = mock_message
+    mock_response = MagicMock()
+    mock_response.choices = [mock_choice]
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+    with patch("eval_mcp.evaluator.openai.AsyncOpenAI", return_value=mock_client):
+        results = evaluate(ops, cases, "llama3.1:8b", provider="ollama")
+
+    assert results[0].extracted_params == {"cvId": "42"}
+
+
+def test_evaluate_ollama_handles_malformed_arguments():
+    """Bad JSON from a local model should yield empty params, not crash."""
+    ops = [make_op("addStarredView", summary="Add")]
+    cases = [TestCase(prompt="p", expected_operation_id="addStarredView")]
+
+    mock_tool_call = MagicMock()
+    mock_tool_call.function.name = "addStarredView"
+    mock_tool_call.function.arguments = "not json"
+    mock_message = MagicMock()
+    mock_message.tool_calls = [mock_tool_call]
+    mock_choice = MagicMock()
+    mock_choice.message = mock_message
+    mock_response = MagicMock()
+    mock_response.choices = [mock_choice]
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+    with patch("eval_mcp.evaluator.openai.AsyncOpenAI", return_value=mock_client):
+        results = evaluate(ops, cases, "llama3.1:8b", provider="ollama")
+
+    assert results[0].passed is True
+    assert results[0].extracted_params == {}

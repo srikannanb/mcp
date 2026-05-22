@@ -3,7 +3,7 @@ from eval_mcp.evaluator import EvalResult
 from eval_mcp.report import render_html
 
 
-def make_result(prompt, expected, actual, passed, exp_desc="", act_desc=""):
+def make_result(prompt, expected, actual, passed, exp_desc="", act_desc="", params=None):
     return EvalResult(
         prompt=prompt,
         expected=expected,
@@ -11,6 +11,7 @@ def make_result(prompt, expected, actual, passed, exp_desc="", act_desc=""):
         passed=passed,
         expected_description=exp_desc,
         actual_description=act_desc,
+        extracted_params=params or {},
     )
 
 
@@ -81,3 +82,44 @@ def test_all_pass_score(tmp_path):
     render_html(results, str(out))
     assert "5 / 5 passed" in out.read_text()
     assert "100%" in out.read_text()
+
+
+def test_params_column_header_present(tmp_path):
+    results = [make_result("p", "op", "op", True)]
+    out = tmp_path / "report.html"
+    render_html(results, str(out))
+    assert "<th>Params</th>" in out.read_text()
+
+
+def test_params_rendered_for_passing_row(tmp_path):
+    results = [
+        make_result("Star view 42", "addStarredView", "addStarredView", True,
+                    params={"cvId": "42"})
+    ]
+    out = tmp_path / "report.html"
+    render_html(results, str(out))
+    content = out.read_text()
+    assert "cvId" in content
+    assert "42" in content
+
+
+def test_params_escaped(tmp_path):
+    results = [
+        make_result("p", "op", "op", True, params={"q": "<script>"}),
+    ]
+    out = tmp_path / "report.html"
+    render_html(results, str(out))
+    content = out.read_text()
+    assert "<script>" not in content
+    assert "&lt;script&gt;" in content
+
+
+def test_params_nested_value_rendered_as_json(tmp_path):
+    results = [
+        make_result("p", "op", "op", True, params={"filter": {"a": 1}}),
+    ]
+    out = tmp_path / "report.html"
+    render_html(results, str(out))
+    content = out.read_text()
+    # JSON-encoded then HTML-escaped: { → {, " → &quot;
+    assert "&quot;a&quot;" in content

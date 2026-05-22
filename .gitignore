@@ -47,3 +47,7 @@ walkthrough-report.html
 # OS
 .DS_Store
 Thumbs.db
+
+# Local notes (not for sharing)
+BLOG_POST.md
+CLAUDE.md

@@ -1,6 +1,7 @@
 import asyncio
+import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import anthropic
 import openai
@@ -20,6 +21,7 @@ class EvalResult:
     passed: bool
     expected_description: str = ""
     actual_description: str = ""
+    extracted_params: dict = field(default_factory=dict)
 
 
 def build_tool(op: Operation) -> dict:
@@ -85,23 +87,26 @@ def _build_openai_tool(op: Operation) -> dict:
     }
 
 
-def _picked_tool_name(content) -> str:
+def _picked_tool(content) -> tuple:
+    """Return (name, input_dict) of the first tool_use block, or ('', {})."""
     for block in content:
         if block.type == "tool_use":
-            return block.name
-    return ""
+            return block.name, block.input or {}
+    return "", {}
 
 
-def _to_result(case, actual: str, op_by_id: dict) -> EvalResult:
+def _to_result(case, actual: str, extracted: dict, op_by_id: dict) -> EvalResult:
     expected_op = op_by_id.get(case.expected_operation_id)
     actual_op = op_by_id.get(actual)
+    passed = actual == case.expected_operation_id
     return EvalResult(
         prompt=case.prompt,
         expected=case.expected_operation_id,
         actual=actual,
-        passed=(actual == case.expected_operation_id),
+        passed=passed,
         expected_description=expected_op.description if expected_op else "",
         actual_description=actual_op.description if actual_op else "",
+        extracted_params=extracted if passed else {},
     )
 
 
@@ -123,7 +128,8 @@ async def _evaluate_anthropic_async(operations: list, test_cases: list, model: s
                 tool_choice={"type": "any"},
                 messages=[{"role": "user", "content": case.prompt}],
             )
-            return _to_result(case, _picked_tool_name(response.content), op_by_id)
+            name, params = _picked_tool(response.content)
+            return _to_result(case, name, params, op_by_id)
 
     # Warm the cache with one call before fanning out. Parallel requests can't
     # share an in-flight cache write — without the warm-up, every concurrent
@@ -153,8 +159,16 @@ async def _evaluate_ollama_async(operations: list, test_cases: list, model: str,
                 messages=[{"role": "user", "content": case.prompt}],
             )
             msg = response.choices[0].message
-            actual = msg.tool_calls[0].function.name if msg.tool_calls else ""
-            return _to_result(case, actual, op_by_id)
+            if msg.tool_calls:
+                fn = msg.tool_calls[0].function
+                actual = fn.name
+                try:
+                    params = json.loads(fn.arguments) if fn.arguments else {}
+                except (TypeError, json.JSONDecodeError):
+                    params = {}
+            else:
+                actual, params = "", {}
+            return _to_result(case, actual, params, op_by_id)
 
     return await asyncio.gather(*(run_one(c) for c in test_cases))
 
@@ -215,11 +229,11 @@ def evaluate_batch(operations: list, test_cases: list, model: str, poll_interval
     picked_by_id = {}
     for result in client.messages.batches.results(batch.id):
         if result.result.type == "succeeded":
-            picked_by_id[result.custom_id] = _picked_tool_name(result.result.message.content)
+            picked_by_id[result.custom_id] = _picked_tool(result.result.message.content)
         else:
-            picked_by_id[result.custom_id] = ""
+            picked_by_id[result.custom_id] = ("", {})
 
     return [
-        _to_result(case, picked_by_id.get(f"case-{i}", ""), op_by_id)
+        _to_result(case, *picked_by_id.get(f"case-{i}", ("", {})), op_by_id=op_by_id)
         for i, case in enumerate(test_cases)
     ]
